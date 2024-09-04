@@ -1,6 +1,11 @@
 import {loadExternalScript} from '../src/adloader.js';
 import {submodule} from '../src/hook.js';
-import {prefixLog, deepAccess, mergeDeep} from '../src/utils.js';
+import {
+  deepAccess,
+  deepSetValue,
+  mergeDeep,
+  prefixLog,
+} from '../src/utils.js';
 
 const MODULE_NAME = '51Degrees';
 export const LOG_PREFIX = `[${MODULE_NAME} RTD Submodule]:`;
@@ -112,33 +117,107 @@ export const is51DegreesMetaPresent = () => {
  * @param {string} key The key to set
  * @param {any} value The value to set
  */
-export const setOrtb2KeyIfNotEmpty = (obj, key, value) => {
+export const deepSetNotEmptyValue = (obj, key, value) => {
   if (!key) {
     throw new Error(LOG_PREFIX + ' Key is required');
   }
 
   if (value) {
-    obj[key] = value;
+    deepSetValue(obj, key, value);
   }
 }
 
 /**
+ * Converts all 51Degrees data to ORTB2 format
+ *
+ * @param {Object} data51 Response from 51Degrees API
+ * @param {Object} [data51.device] Device data
+ * @param {Object} [data51.location] Location data
+ * @param {Object} [data51.ip] IP data
+ *
+ * @returns {Object} Enriched ORTB2 object
+ */
+export const convert51DegreesDataToOrtb2 = (data51) => {
+  let ortb2Data = {};
+
+  if (!data51) {
+    return ortb2Data;
+  }
+
+  ortb2Data = convert51DegreesDeviceToOrtb2(data51.device);
+
+  if (data51.location) {
+    mergeDeep(ortb2Data, convert51DegreesLocationToOrtb2(data51.location));
+  }
+
+  if (data51.ip?.ip) {
+    deepSetValue(ortb2Data, 'device.ip', data51.ip.ip);
+  }
+
+  if (data51.ip?.ipv6) {
+    deepSetValue(ortb2Data, 'device.ipv6', data51.ip.ipv6);
+  }
+
+  return ortb2Data;
+};
+
+/**
+ * Converts 51Degrees location data to ORTB2 format
+ *
+ * @param {Object} location 51Degrees location object
+ * @param {Object} [location.approximatelocation]
+ * @param {Object} [location.approximatelocation.latitude] Latitude
+ * @param {Object} [location.approximatelocation.longitude] Longitude
+ * @param {Object} [location.countrycode3] Country code using ISO-3166-1-alpha-3
+ * @param {Object} [location.regioncode] Region code using ISO-3166-2
+ * @param {Object} [location.town] Town
+ * @param {Object} [location.zipcode] Zip code
+ * @param {Object} [location.timezoneoffset] Timezone offset in minutes from UTC
+ *
+ * @returns {Object} Enriched ORTB2 object
+ */
+export const convert51DegreesLocationToOrtb2 = (location) => {
+  const ortb2Data = {};
+
+  if (!location) {
+    return ortb2Data;
+  }
+
+  deepSetNotEmptyValue(ortb2Data, 'device.geo.lat', location.approximatelocation?.latitude);
+  deepSetNotEmptyValue(ortb2Data, 'device.geo.lon', location.approximatelocation?.longitude);
+  deepSetNotEmptyValue(ortb2Data, 'device.geo.country', location.countrycode3?.toUpperCase());
+  deepSetNotEmptyValue(ortb2Data, 'device.geo.region', location.regioncode?.toUpperCase());
+  deepSetNotEmptyValue(ortb2Data, 'device.geo.city', location.town);
+  deepSetNotEmptyValue(ortb2Data, 'device.geo.zip', location.zipcode);
+  deepSetNotEmptyValue(ortb2Data, 'device.geo.utcoffset', location.timezoneoffset);
+
+  if (ortb2Data.device?.geo && Object.keys(ortb2Data.device.geo).length) {
+    deepSetValue(ortb2Data, 'device.geo.type', 2);
+    deepSetValue(ortb2Data, 'device.geo.ipservice', 51);
+  }
+
+  return ortb2Data;
+};
+
+/**
  * Converts 51Degrees device data to ORTB2 format
  *
- * @param {Object} device
+ * @param {Object} device 51Degrees device object
  * @param {string} [device.deviceid] Device ID (unique 51Degrees identifier)
- * @param {string} [device.devicetype]
- * @param {string} [device.hardwarevendor]
- * @param {string} [device.hardwaremodel]
- * @param {string[]} [device.hardwarename]
- * @param {string} [device.platformname]
- * @param {string} [device.platformversion]
- * @param {number} [device.screenpixelsheight]
- * @param {number} [device.screenpixelswidth]
- * @param {number} [device.pixelratio]
- * @param {number} [device.screeninchesheight]
+ * @param {string} [device.devicetype] Device type
+ * @param {string} [device.hardwarevendor] Hardware vendor
+ * @param {string} [device.hardwaremodel] Hardware model
+ * @param {string[]} [device.hardwarename] Hardware name
+ * @param {string} [device.platformname] Platform name
+ * @param {string} [device.platformversion] Platform version
+ * @param {number} [device.screenpixelsheight] Screen height in pixels
+ * @param {number} [device.screenpixelswidth] Screen width in pixels
+ * @param {number} [device.screenpixelsphysicalheight] Screen physical height in pixels
+ * @param {number} [device.screenpixelsphysicalwidth] Screen physical width in pixels
+ * @param {number} [device.pixelratio] Pixel ratio
+ * @param {number} [device.screeninchesheight] Screen height in inches
  *
- * @returns {Object}
+ * @returns {Object} Enriched ORTB2 object
  */
 export const convert51DegreesDeviceToOrtb2 = (device) => {
   const ortb2Device = {};
@@ -154,27 +233,26 @@ export const convert51DegreesDeviceToOrtb2 = (device) => {
         : null
     );
 
+  const devicePhysicalPPI = device.screenpixelsphysicalheight && device.screeninchesheight
+    ? Math.round(device.screenpixelsphysicalheight / device.screeninchesheight)
+    : null;
+
   const devicePPI = device.screenpixelsheight && device.screeninchesheight
     ? Math.round(device.screenpixelsheight / device.screeninchesheight)
     : null;
 
-  setOrtb2KeyIfNotEmpty(ortb2Device, 'devicetype', ORTB_DEVICE_TYPE_MAP.get(device.devicetype));
-  setOrtb2KeyIfNotEmpty(ortb2Device, 'make', device.hardwarevendor);
-  setOrtb2KeyIfNotEmpty(ortb2Device, 'model', deviceModel);
-  setOrtb2KeyIfNotEmpty(ortb2Device, 'os', device.platformname);
-  setOrtb2KeyIfNotEmpty(ortb2Device, 'osv', device.platformversion);
-  setOrtb2KeyIfNotEmpty(ortb2Device, 'h', device.screenpixelsheight);
-  setOrtb2KeyIfNotEmpty(ortb2Device, 'w', device.screenpixelswidth);
-  setOrtb2KeyIfNotEmpty(ortb2Device, 'pxratio', device.pixelratio);
-  setOrtb2KeyIfNotEmpty(ortb2Device, 'ppi', devicePPI);
+  deepSetNotEmptyValue(ortb2Device, 'devicetype', ORTB_DEVICE_TYPE_MAP.get(device.devicetype));
+  deepSetNotEmptyValue(ortb2Device, 'make', device.hardwarevendor);
+  deepSetNotEmptyValue(ortb2Device, 'model', deviceModel);
+  deepSetNotEmptyValue(ortb2Device, 'os', device.platformname);
+  deepSetNotEmptyValue(ortb2Device, 'osv', device.platformversion);
+  deepSetNotEmptyValue(ortb2Device, 'h', device.screenpixelsphysicalheight || device.screenpixelsheight);
+  deepSetNotEmptyValue(ortb2Device, 'w', device.screenpixelsphysicalwidth || device.screenpixelswidth);
+  deepSetNotEmptyValue(ortb2Device, 'pxratio', device.pixelratio);
+  deepSetNotEmptyValue(ortb2Device, 'ppi', devicePhysicalPPI || devicePPI);
+  deepSetNotEmptyValue(ortb2Device, 'ext.fiftyonedegrees_deviceId', device.deviceid);
 
-  if (device.deviceid) {
-    ortb2Device.ext = {
-      'fiftyonedegrees_deviceId': device.deviceid
-    };
-  }
-
-  return ortb2Device;
+  return {device: ortb2Device};
 }
 
 /**
@@ -211,7 +289,7 @@ export const getBidRequestData = (reqBidsConfigObj, callback, moduleConfig, user
         logMessage('51Degrees raw data: ', data);
         mergeDeep(
           reqBidsConfigObj.ortb2Fragments.global,
-          {device: convert51DegreesDeviceToOrtb2(data.device)},
+          convert51DegreesDataToOrtb2(data),
         );
         logMessage('reqBidsConfigObj: ', reqBidsConfigObj);
         callback();
