@@ -3126,6 +3126,12 @@ describe('User ID', function () {
       });
 
       return getGlobal().getUserIdsAsync().then(() => {
+        const adUnits = [{
+          bids: [
+            { bidder: 'bidderA' },
+            { bidder: 'bidderB' },
+          ]
+        }];
         const ortb2Fragments = {
           global: {
             user: {}
